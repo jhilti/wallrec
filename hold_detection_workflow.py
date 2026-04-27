@@ -31,6 +31,8 @@ BACKENDS = (
     "yolo-seg",
 )
 
+DEFAULT_SIZE_REFERENCE = "IMG_1637_mobile_sam_detected_holds.json"
+
 
 def pick_torch_device(torch):
     if torch.cuda.is_available():
@@ -145,7 +147,7 @@ def collect_corners_interactively(image_rgb):
     return order_corners(corners)
 
 
-def build_context(image_rgb, corners, max_height):
+def build_context(image_rgb, corners, max_height, size_constraints=None):
     image_small, scale = resize_image(image_rgb, max_height=max_height)
     corners = order_corners(np.asarray(corners, dtype=np.float32))
     corners_small = corners / scale
@@ -159,6 +161,7 @@ def build_context(image_rgb, corners, max_height):
         "corners_small": corners_small,
         "search_mask": search_mask,
         "hold_score": hold_score,
+        "size_constraints": size_constraints,
         "backend_state": {},
     }
 
@@ -169,6 +172,113 @@ def contour_center(contour):
         x, y, w, h = cv2.boundingRect(contour)
         return x + w / 2.0, y + h / 2.0
     return moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]
+
+
+def reference_detection_metrics(detection):
+    contour = np.asarray(detection["contour"], dtype=np.float32).reshape(-1, 1, 2)
+    x0, y0, x1, y1 = detection["bbox"]
+    width = float(x1 - x0)
+    height = float(y1 - y0)
+    return {
+        "area": float(detection["area"]),
+        "perimeter": float(cv2.arcLength(contour, True)),
+        "max_dim": max(width, height),
+        "min_dim": min(width, height),
+    }
+
+
+def load_size_constraints(reference_path, min_tolerance, max_linear_scale):
+    if not reference_path:
+        return None
+
+    path = Path(reference_path)
+    if not path.exists():
+        return None
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    detections = payload.get("detections", [])
+    if not detections:
+        return None
+
+    metrics = [reference_detection_metrics(det) for det in detections]
+    values = {key: np.asarray([item[key] for item in metrics], dtype=np.float32) for key in metrics[0]}
+    max_area_scale = max_linear_scale * max_linear_scale
+
+    return {
+        "source": str(path),
+        "count": len(detections),
+        "min_tolerance": float(min_tolerance),
+        "max_linear_scale": float(max_linear_scale),
+        "min_area": float(values["area"].min() * min_tolerance),
+        "min_perimeter": float(values["perimeter"].min() * min_tolerance),
+        "min_min_dim": float(values["min_dim"].min() * min_tolerance),
+        "min_max_dim": float(values["max_dim"].min() * min_tolerance),
+        "max_area": float(values["area"].max() * max_area_scale),
+        "max_perimeter": float(values["perimeter"].max() * max_linear_scale),
+        "max_dim": float(values["max_dim"].max() * max_linear_scale),
+        "reference_min": {key: float(value.min()) for key, value in values.items()},
+        "reference_max": {key: float(value.max()) for key, value in values.items()},
+    }
+
+
+def detection_size_metrics(detection, scale):
+    x0, y0, x1, y1 = detection["bbox"]
+    width = float(x1 - x0) * scale
+    height = float(y1 - y0) * scale
+    contour = np.asarray(detection["contour"], dtype=np.float32)
+    return {
+        "area": float(detection["area"]) * scale * scale,
+        "perimeter": float(cv2.arcLength(contour, True)) * scale,
+        "max_dim": max(width, height),
+        "min_dim": min(width, height),
+    }
+
+
+def size_rejection_reason(detection, constraints, scale):
+    if not constraints:
+        return None
+
+    metrics = detection_size_metrics(detection, scale)
+    checks = (
+        ("area", "min_area", "<"),
+        ("perimeter", "min_perimeter", "<"),
+        ("min_dim", "min_min_dim", "<"),
+        ("max_dim", "min_max_dim", "<"),
+        ("area", "max_area", ">"),
+        ("perimeter", "max_perimeter", ">"),
+        ("max_dim", "max_dim", ">"),
+    )
+    for metric_key, limit_key, operator in checks:
+        value = metrics[metric_key]
+        limit = constraints[limit_key]
+        epsilon = 1e-3
+        if operator == "<" and value < limit - epsilon:
+            return f"{metric_key} {value:.1f} below {limit:.1f}"
+        if operator == ">" and value > limit + epsilon:
+            return f"{metric_key} {value:.1f} above {limit:.1f}"
+    return None
+
+
+def passes_size_constraints(detection, ctx):
+    return size_rejection_reason(detection, ctx.get("size_constraints"), ctx["scale"]) is None
+
+
+def filter_size_constraints(detections, ctx):
+    constraints = ctx.get("size_constraints")
+    if not constraints:
+        return detections
+    return [det for det in detections if passes_size_constraints(det, ctx)]
+
+
+def describe_size_constraints(constraints):
+    if not constraints:
+        return "disabled"
+    return (
+        f"{constraints['source']} ({constraints['count']} holds): "
+        f"area {constraints['min_area']:.0f}-{constraints['max_area']:.0f}px, "
+        f"perimeter {constraints['min_perimeter']:.0f}-{constraints['max_perimeter']:.0f}px, "
+        f"max dimension {constraints['min_max_dim']:.0f}-{constraints['max_dim']:.0f}px"
+    )
 
 
 def normalize_detection(det, backend):
@@ -245,9 +355,13 @@ def suppress_duplicates(detections):
     return kept
 
 
-def select_detections(detections, target_count, search_mask, max_auto):
+def select_detections(detections, target_count, search_mask, max_auto, ctx=None):
     if not detections:
         return []
+    if ctx is not None:
+        detections = filter_size_constraints(detections, ctx)
+        if not detections:
+            return []
     detections = suppress_duplicates(detections)
     if target_count is not None and target_count > 0:
         return select_banded_detections(detections, target_count=target_count, search_mask=search_mask)
@@ -338,6 +452,8 @@ def local_detection_at_point(ctx, x, y, backend="classic-click"):
         if det is None:
             continue
         det = normalize_detection(det, backend)
+        if not passes_size_constraints(det, ctx):
+            continue
         det["source"] = "manual-click"
         if best is None or det["confidence"] > best["confidence"]:
             best = det
@@ -360,6 +476,7 @@ def build_seed_points(ctx, target_count, max_seeds):
         target_count=min(default_target + 40, max(max_seeds, default_target * 2)),
         search_mask=search_mask,
         max_auto=max_seeds,
+        ctx=ctx,
     )
     _, peaks = pick_peak_points(
         score_map,
@@ -459,7 +576,10 @@ def detection_from_mask(mask, confidence, ctx, backend, source="mask", extra=Non
     }
     if extra:
         det.update(extra)
-    return normalize_detection(det, backend)
+    det = normalize_detection(det, backend)
+    if not passes_size_constraints(det, ctx):
+        return None
+    return det
 
 
 def build_prompt_variants(x, y, width, height):
@@ -514,7 +634,7 @@ def run_classic(ctx, args):
     for params in parameter_grid:
         proposal = propose_detections(score_map, search_mask, params)
         candidates = [normalize_detection(det, "classic") for det in proposal["detections"]]
-        selected = select_detections(candidates, target, search_mask, args.max_auto_detections)
+        selected = select_detections(candidates, target, search_mask, args.max_auto_detections, ctx=ctx)
         if target is None:
             count_score = -abs(len(selected) - min(len(candidates), args.max_auto_detections)) * 0.01
         else:
@@ -587,7 +707,7 @@ def run_sam_like(ctx, args, backend):
         "seed_count": len(seeds),
         "raw_candidates": len(detections),
     }
-    return select_detections(detections, args.target_count, ctx["search_mask"], args.max_auto_detections)
+    return select_detections(detections, args.target_count, ctx["search_mask"], args.max_auto_detections, ctx=ctx)
 
 
 def load_efficient_sam_model(args):
@@ -671,7 +791,7 @@ def run_efficient_sam(ctx, args):
         "torch": torch,
         "image_tensor": image_tensor,
     }
-    return select_detections(detections, args.target_count, ctx["search_mask"], args.max_auto_detections)
+    return select_detections(detections, args.target_count, ctx["search_mask"], args.max_auto_detections, ctx=ctx)
 
 
 def run_ultralytics(ctx, args, backend):
@@ -724,7 +844,7 @@ def run_ultralytics(ctx, args, backend):
         "raw_candidates": len(detections),
         "raw_masks": raw_masks,
     }
-    return select_detections(detections, args.target_count, ctx["search_mask"], args.max_auto_detections)
+    return select_detections(detections, args.target_count, ctx["search_mask"], args.max_auto_detections, ctx=ctx)
 
 
 def detect_at_click(ctx, detections, x_small, y_small):
@@ -862,6 +982,7 @@ def save_detected_holds(image_path, ctx, detections_small, output_path):
         },
         "scale": float(ctx["scale"]),
         "corner_points": [[float(x), float(y)] for x, y in ctx["corners"]],
+        "size_constraints": ctx.get("size_constraints"),
         "target_count": len(detections),
         "detections": [],
     }
@@ -921,6 +1042,24 @@ def parse_args():
     parser.add_argument("--imgsz", type=int, default=1024, help="Ultralytics inference image size.")
     parser.add_argument("--conf", type=float, default=0.25, help="Ultralytics confidence threshold.")
     parser.add_argument("--iou", type=float, default=0.70, help="Ultralytics IoU threshold.")
+    parser.add_argument(
+        "--size-reference-json",
+        default=DEFAULT_SIZE_REFERENCE,
+        help="Truth JSON used to derive min/max hold size constraints.",
+    )
+    parser.add_argument("--no-size-filter", action="store_true", help="Disable truth-derived hold size filtering.")
+    parser.add_argument(
+        "--min-size-tolerance",
+        type=float,
+        default=1.0,
+        help="Lower-bound tolerance for truth-derived size constraints.",
+    )
+    parser.add_argument(
+        "--max-hold-scale",
+        type=float,
+        default=1.5,
+        help="Largest allowed hold scale relative to the truth set. Area uses this value squared.",
+    )
     parser.add_argument("--save-holds", help="Output JSON path.")
     parser.add_argument("--save-plot", help="Optional debug plot path.")
     parser.add_argument("--no-edit", action="store_true", help="Skip final interactive click correction.")
@@ -952,7 +1091,16 @@ def main():
     else:
         corners = collect_corners_interactively(image_rgb)
 
-    ctx = build_context(image_rgb, corners, args.max_height)
+    size_constraints = None
+    if not args.no_size_filter:
+        size_constraints = load_size_constraints(
+            args.size_reference_json,
+            min_tolerance=args.min_size_tolerance,
+            max_linear_scale=args.max_hold_scale,
+        )
+
+    ctx = build_context(image_rgb, corners, args.max_height, size_constraints=size_constraints)
+    print(f"Size filter: {describe_size_constraints(size_constraints)}")
 
     if backend == "classic":
         detections_small = run_classic(ctx, args)
