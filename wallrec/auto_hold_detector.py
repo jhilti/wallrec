@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 
 import cv2
 import matplotlib.pyplot as plt
@@ -598,6 +599,8 @@ def plot_results(image_rgb, result, image_path, save_path=None):
     fig.tight_layout()
 
     if save_path:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=160, bbox_inches="tight")
         print(f"Saved plot to {save_path}")
     plt.show()
@@ -605,7 +608,7 @@ def plot_results(image_rgb, result, image_path, save_path=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Automatic climbing hold detector draft using OpenCV.")
-    parser.add_argument("image", nargs="?", default="IMG_1505.jpeg", help="Path to the wall image.")
+    parser.add_argument("image", nargs="?", default="data/images/IMG_1505.jpeg", help="Path to the wall image.")
     parser.add_argument("--save", help="Optional path to save the debug plot.")
     parser.add_argument("--target-count", type=int, default=92, help="Expected number of holds to bias tuning.")
     args = parser.parse_args()

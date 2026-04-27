@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from segment_anything import SamPredictor, sam_model_registry
 
-from auto_hold_detector import bbox_iou, build_hold_score, centers_too_close
+from wallrec.auto_hold_detector import bbox_iou, build_hold_score, centers_too_close
 
 _ORIGINAL_TORCH_AS_TENSOR = torch.as_tensor
 _ORIGINAL_TENSOR_NUMPY = torch.Tensor.numpy
@@ -602,6 +602,8 @@ def plot_results(image_rgb, corners, result, image_path, save_path=None):
     fig.tight_layout()
 
     if save_path:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=160, bbox_inches="tight")
         print(f"Saved plot to {save_path}")
     plt.show()
@@ -609,7 +611,7 @@ def plot_results(image_rgb, corners, result, image_path, save_path=None):
 
 def default_holds_output_path(image_path):
     image_file = Path(image_path)
-    return str(image_file.with_name(f"{image_file.stem}_detected_holds.json"))
+    return str(Path("outputs/annotations") / f"{image_file.stem}_detected_holds.json")
 
 
 def save_detected_holds(image_path, corners, result, output_path):
@@ -635,6 +637,8 @@ def save_detected_holds(image_path, corners, result, output_path):
             }
         )
 
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
     print(f"Saved detected holds to {output_path}")
@@ -642,8 +646,8 @@ def save_detected_holds(image_path, corners, result, output_path):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Interactive SAM hold search using 4 clicked wall corners.")
-    parser.add_argument("image", nargs="?", default="IMG_1505.jpeg", help="Path to the wall image.")
-    parser.add_argument("--checkpoint", default="sam_vit_l_0b3195.pth", help="Path to the SAM checkpoint.")
+    parser.add_argument("image", nargs="?", default="data/images/IMG_1505.jpeg", help="Path to the wall image.")
+    parser.add_argument("--checkpoint", default="models/sam_vit_l_0b3195.pth", help="Path to the SAM checkpoint.")
     parser.add_argument("--model-type", default="vit_l", help="SAM model type.")
     parser.add_argument("--target-count", type=int, default=92, help="Desired number of final holds.")
     parser.add_argument("--max-height", type=int, default=1400, help="Resize height for SAM processing.")

@@ -6,7 +6,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from auto_hold_detector import bbox_iou, centers_too_close, load_image, normalize_map
+from wallrec.auto_hold_detector import bbox_iou, centers_too_close, load_image, normalize_map
 
 
 def order_corners(points):
@@ -613,7 +613,9 @@ def save_detected_holds(image_path, corners, detections, output_path):
                 "contour": [[float(pt[0][0]), float(pt[0][1])] for pt in det["contour"]],
             }
         )
-    Path(output_path).write_text(json.dumps(payload, indent=2))
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2))
     print(f"Saved detected holds to {output_path}")
 
 
@@ -643,6 +645,8 @@ def plot_comparison(image_rgb, corners, detections, gt_detections, metrics, outp
     ax.axis("off")
     fig.tight_layout()
     if output_path:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output_path, dpi=160, bbox_inches="tight")
         print(f"Saved plot to {output_path}")
     plt.show()
@@ -650,11 +654,11 @@ def plot_comparison(image_rgb, corners, detections, gt_detections, metrics, outp
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Lightweight hold detector tuned against IMG_1637 ground truth.")
-    parser.add_argument("image", nargs="?", default="IMG_1637.jpeg", help="Image to detect holds in.")
-    parser.add_argument("--gt-json", default="IMG_1637_detected_holds.json", help="Ground-truth JSON used for tuning/evaluation.")
+    parser.add_argument("image", nargs="?", default="data/images/IMG_1637.jpeg", help="Image to detect holds in.")
+    parser.add_argument("--gt-json", default="data/annotations/IMG_1637_detected_holds.json", help="Ground-truth JSON used for tuning/evaluation.")
     parser.add_argument("--max-height", type=int, default=1600, help="Resize height for tuning and detection.")
-    parser.add_argument("--save-plot", default="lightweight_hold_detector_1637.png", help="Path for the comparison plot.")
-    parser.add_argument("--save-holds", default="IMG_1637_lightweight_detected_holds.json", help="Path for the output detections JSON.")
+    parser.add_argument("--save-plot", default="reports/plots/lightweight_hold_detector_1637.png", help="Path for the comparison plot.")
+    parser.add_argument("--save-holds", default="outputs/annotations/IMG_1637_lightweight_detected_holds.json", help="Path for the output detections JSON.")
     return parser.parse_args()
 
 

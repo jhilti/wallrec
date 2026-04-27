@@ -2,6 +2,9 @@
 .venv/
 venv/
 
+# macOS metadata
+.DS_Store
+
 # Python bytecode/cache
 __pycache__/
 *.py[cod]
@@ -11,5 +14,8 @@ __pycache__/
 *.pt
 *.onnx
 
-# Detector output folders
+# Generated artifacts
+outputs/*
+!outputs/.gitkeep
 runs/
+datasets/

@@ -9,8 +9,8 @@ import numpy as np
 import torch
 from segment_anything import SamPredictor, sam_model_registry
 
-from auto_hold_detector import bbox_iou, centers_too_close, load_image
-from lightweight_hold_detector_1637 import (
+from wallrec.auto_hold_detector import bbox_iou, centers_too_close, load_image
+from wallrec.lightweight_hold_detector_1637 import (
     build_search_hold_score,
     load_ground_truth,
     match_predictions,
@@ -605,7 +605,9 @@ def save_detected_holds(image_path, corners, detections, output_path):
                 "contour": [[float(pt[0][0]), float(pt[0][1])] for pt in det["contour"]],
             }
         )
-    Path(output_path).write_text(json.dumps(payload, indent=2))
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2))
     print(f"Saved detected holds to {output_path}")
 
 
@@ -636,6 +638,8 @@ def plot_results(image_rgb, corners, detections, output_path, metrics=None, gt_d
 
     ax.axis("off")
     fig.tight_layout()
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
     print(f"Saved plot to {output_path}")
 
@@ -646,14 +650,14 @@ def plot_results(image_rgb, corners, detections, output_path, metrics=None, gt_d
 
 def parse_args():
     parser = argparse.ArgumentParser(description="SAM hold detector tuned against IMG_1637.")
-    parser.add_argument("image", nargs="?", default="IMG_1637.jpeg", help="Path to the wall image.")
-    parser.add_argument("--gt-json", default="IMG_1637_detected_holds.json", help="Optional ground-truth JSON for evaluation and tuning.")
-    parser.add_argument("--checkpoint", default="sam_vit_l_0b3195.pth", help="Path to the SAM checkpoint.")
+    parser.add_argument("image", nargs="?", default="data/images/IMG_1637.jpeg", help="Path to the wall image.")
+    parser.add_argument("--gt-json", default="data/annotations/IMG_1637_detected_holds.json", help="Optional ground-truth JSON for evaluation and tuning.")
+    parser.add_argument("--checkpoint", default="models/sam_vit_l_0b3195.pth", help="Path to the SAM checkpoint.")
     parser.add_argument("--model-type", default="vit_l", help="SAM model type.")
     parser.add_argument("--target-count", type=int, default=92, help="Desired number of final holds.")
     parser.add_argument("--max-height", type=int, default=1600, help="Resize height used before warping.")
-    parser.add_argument("--save-plot", default="sam_hold_detector_tuned.png", help="Path for the debug comparison plot.")
-    parser.add_argument("--save-holds", default="IMG_1637_sam_tuned_detected_holds.json", help="Path for the output detections JSON.")
+    parser.add_argument("--save-plot", default="reports/plots/sam_hold_detector_tuned.png", help="Path for the debug comparison plot.")
+    parser.add_argument("--save-holds", default="outputs/annotations/IMG_1637_sam_tuned_detected_holds.json", help="Path for the output detections JSON.")
     parser.add_argument("--lightweight-fallback-json", help="Optional lightweight detector JSON used to fill missed holds.")
     parser.add_argument(
         "--corners",
@@ -691,7 +695,7 @@ def main():
 
     fallback_detections_full = maybe_load_lightweight_fallback(args.lightweight_fallback_json)
     if fallback_detections_full is None and Path(args.image).name == "IMG_1637.jpeg":
-        fallback_detections_full = maybe_load_lightweight_fallback("IMG_1637_lightweight_detected_holds.json")
+        fallback_detections_full = maybe_load_lightweight_fallback("data/annotations/IMG_1637_lightweight_detected_holds.json")
 
     result = run_detector(
         image_rgb=image_rgb,

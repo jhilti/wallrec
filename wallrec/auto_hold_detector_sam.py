@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 
 import cv2
 import matplotlib.pyplot as plt
@@ -8,7 +9,7 @@ import torch
 from segment_anything import SamAutomaticMaskGenerator, SamPredictor, sam_model_registry
 from segment_anything.utils.amg import MaskData
 
-from auto_hold_detector import (
+from wallrec.auto_hold_detector import (
     bbox_iou,
     build_hold_score,
     centers_too_close,
@@ -439,6 +440,8 @@ def plot_results(image_rgb, result, image_path, save_path=None):
     fig.tight_layout()
 
     if save_path:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=160, bbox_inches="tight")
         print(f"Saved plot to {save_path}")
     plt.show()
@@ -446,10 +449,10 @@ def plot_results(image_rgb, result, image_path, save_path=None):
 
 def main():
     parser = argparse.ArgumentParser(description="SAM-based climbing hold detector for verification.")
-    parser.add_argument("image", nargs="?", default="IMG_1505.jpeg", help="Path to the wall image.")
+    parser.add_argument("image", nargs="?", default="data/images/IMG_1505.jpeg", help="Path to the wall image.")
     parser.add_argument(
         "--checkpoint",
-        default="sam_vit_l_0b3195.pth",
+        default="models/sam_vit_l_0b3195.pth",
         help="Path to the SAM checkpoint.",
     )
     parser.add_argument("--model-type", default="vit_l", help="SAM model type, for example vit_l.")

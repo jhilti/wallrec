@@ -8,8 +8,8 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from auto_hold_detector import bbox_iou, centers_too_close, load_image
-from lightweight_hold_detector_1637 import (
+from wallrec.auto_hold_detector import bbox_iou, centers_too_close, load_image
+from wallrec.lightweight_hold_detector_1637 import (
     build_search_hold_score,
     order_corners,
     pick_peak_points,
@@ -31,7 +31,13 @@ BACKENDS = (
     "yolo-seg",
 )
 
-DEFAULT_SIZE_REFERENCE = "IMG_1637_mobile_sam_detected_holds.json"
+DATA_DIR = Path("data")
+IMAGES_DIR = DATA_DIR / "images"
+ANNOTATIONS_DIR = DATA_DIR / "annotations"
+MODELS_DIR = Path("models")
+OUTPUTS_DIR = Path("outputs")
+
+DEFAULT_SIZE_REFERENCE = ANNOTATIONS_DIR / "IMG_1637_mobile_sam_detected_holds.json"
 
 
 def pick_torch_device(torch):
@@ -672,7 +678,7 @@ def run_sam_like(ctx, args, backend):
     checkpoint = args.checkpoint
     if backend == "sam-vit-b":
         model_type = "vit_b"
-        checkpoint = checkpoint or "sam_vit_b_01ec64.pth"
+        checkpoint = checkpoint or str(MODELS_DIR / "sam_vit_b_01ec64.pth")
     elif backend == "mobile-sam":
         model_type = args.model_type or "vit_t"
 
@@ -802,7 +808,7 @@ def run_ultralytics(ctx, args, backend):
 
     model_path = args.yolo_model
     if backend == "fastsam":
-        model_path = model_path or "FastSAM-s.pt"
+        model_path = model_path or str(MODELS_DIR / "FastSAM-s.pt")
         model = FastSAM(model_path)
     else:
         model_path = model_path or "yolo11n-seg.pt"
@@ -967,7 +973,7 @@ def interactive_edit(ctx, detections_small):
 def default_output_path(image_path, backend):
     image_file = Path(image_path)
     safe_backend = backend.replace("-", "_")
-    return str(image_file.with_name(f"{image_file.stem}_{safe_backend}_detected_holds.json"))
+    return str(OUTPUTS_DIR / "annotations" / f"{image_file.stem}_{safe_backend}_detected_holds.json")
 
 
 def save_detected_holds(image_path, ctx, detections_small, output_path):
@@ -999,7 +1005,9 @@ def save_detected_holds(image_path, ctx, detections_small, output_path):
                 "contour": [[float(pt[0][0]), float(pt[0][1])] for pt in det["contour"]],
             }
         )
-    Path(output_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"Saved detected holds to {output_path}")
 
 
@@ -1017,6 +1025,8 @@ def plot_results(ctx, detections_small, output_path):
     ax.set_title(f"{backend}: {len(detections)} holds | raw candidates: {raw_candidates}")
     ax.axis("off")
     fig.tight_layout()
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
     print(f"Saved plot to {output_path}")
     if "agg" not in plt.get_backend().lower():
@@ -1029,7 +1039,7 @@ def parse_args():
         description="Shared climbing-hold detection workflow: corners, auto-detect, click refine.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("image", nargs="?", default="IMG_1637.jpeg", help="Path to the climbing wall image.")
+    parser.add_argument("image", nargs="?", default=str(IMAGES_DIR / "IMG_1637.jpeg"), help="Path to the climbing wall image.")
     parser.add_argument("--backend", choices=BACKENDS, default="classic", help="Detection backend.")
     parser.add_argument("--target-count", type=int, help="Optional expected hold count.")
     parser.add_argument("--max-height", type=int, default=1400, help="Resize height for processing.")
@@ -1038,7 +1048,7 @@ def parse_args():
     parser.add_argument("--checkpoint", help="SAM/MobileSAM/EfficientSAM checkpoint path.")
     parser.add_argument("--model-type", help="SAM model type, e.g. vit_b, vit_l, vit_t.")
     parser.add_argument("--efficient-variant", choices=("ti", "s"), default="ti", help="EfficientSAM variant.")
-    parser.add_argument("--yolo-model", help="Ultralytics model path, e.g. FastSAM-s.pt or a custom hold best.pt.")
+    parser.add_argument("--yolo-model", help="Ultralytics model path, e.g. models/FastSAM-s.pt or a custom hold best.pt.")
     parser.add_argument("--imgsz", type=int, default=1024, help="Ultralytics inference image size.")
     parser.add_argument("--conf", type=float, default=0.25, help="Ultralytics confidence threshold.")
     parser.add_argument("--iou", type=float, default=0.70, help="Ultralytics IoU threshold.")
@@ -1081,7 +1091,7 @@ def main():
     if backend == "sam-vit-b":
         args.model_type = "vit_b"
         if args.checkpoint is None:
-            args.checkpoint = "sam_vit_b_01ec64.pth"
+            args.checkpoint = str(MODELS_DIR / "sam_vit_b_01ec64.pth")
     if backend == "mobile-sam" and args.model_type is None:
         args.model_type = "vit_t"
 
