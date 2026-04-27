@@ -1,0 +1,10 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+
+# Model checkpoints
+*.pth
